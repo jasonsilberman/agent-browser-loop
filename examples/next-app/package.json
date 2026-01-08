@@ -1,0 +1,29 @@
+{
+  "name": "next-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --hostname localhost --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "^3.0.10",
+    "next": "16.1.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "agent-browser-loop": "file:../..",
+    "@types/node": "^22.10.2",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "typescript": "^5.7.2",
+    "zod": "^4.3.5"
+  },
+  "volta": {
+    "node": "24.12.0"
+  }
+}

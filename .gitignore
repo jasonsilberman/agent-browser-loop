@@ -1,0 +1,13 @@
+.DS_Store
+node_modules
+bun.lock
+bun.lockb
+.env
+.env.local
+.env.*
+dist
+.next
+.out
+coverage
+examples/next-app/data
+

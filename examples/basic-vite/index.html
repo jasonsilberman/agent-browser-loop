@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Task Control System</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <h1>TASK-CTRL-02</h1>
+        <div class="topbar-status">
+          <span class="status-dot">CLIENT</span>
+          <span class="timestamp" id="clock">--</span>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <!-- Left Column -->
+        <div class="left-col">
+          <!-- Login Panel (shown when logged out) -->
+          <section class="panel" id="login-panel">
+            <div class="panel-header">
+              <h2>OPERATOR LOGIN</h2>
+              <span class="status-indicator offline">OFFLINE</span>
+            </div>
+            <p class="hint">Use any email and password <span class="code">demo</span></p>
+            <form id="login-form" class="login-form">
+              <label class="field">
+                <span class="field-label">EMAIL</span>
+                <input
+                  type="email"
+                  name="email"
+                  placeholder="operator@system.local"
+                  required
+                  class="field-input"
+                />
+              </label>
+              <label class="field">
+                <span class="field-label">PASSWORD</span>
+                <input
+                  type="password"
+                  name="password"
+                  placeholder="demo"
+                  required
+                  class="field-input"
+                />
+              </label>
+              <button type="submit" class="btn-primary full">LOGIN</button>
+              <p class="form-error" id="login-error"></p>
+            </form>
+          </section>
+
+          <!-- User Panel (shown when logged in) -->
+          <section class="panel user-panel" id="user-panel" hidden>
+            <div class="panel-header">
+              <h2>OPERATOR</h2>
+              <span class="status-indicator online">ACTIVE</span>
+            </div>
+            <div class="user-info">
+              <span class="user-name" id="user-name">--</span>
+              <button type="button" class="btn-ghost" id="logout-btn">LOGOUT</button>
+            </div>
+          </section>
+
+          <!-- Task Panel (shown when logged in) -->
+          <section class="panel" id="task-panel" hidden>
+            <div class="panel-header">
+              <h2>TASK QUEUE</h2>
+              <span class="badge" id="pending-badge">0 PENDING</span>
+            </div>
+            <form id="task-form" class="task-form">
+              <div class="task-form-row">
+                <input
+                  type="text"
+                  name="title"
+                  placeholder="New task..."
+                  required
+                  class="task-input"
+                  id="task-input"
+                />
+                <select name="priority" class="task-select" id="task-priority">
+                  <option value="low">LOW</option>
+                  <option value="medium" selected>MEDIUM</option>
+                  <option value="high">HIGH</option>
+                </select>
+                <button type="submit" class="btn-primary">ADD</button>
+              </div>
+            </form>
+            <div class="task-lists">
+              <div class="task-section">
+                <h3>PENDING <span class="count" id="pending-count">0</span></h3>
+                <ul class="task-list" id="pending-list"></ul>
+                <p class="empty" id="pending-empty">No pending tasks</p>
+              </div>
+              <div class="task-section">
+                <h3>COMPLETED <span class="count" id="completed-count">0</span></h3>
+                <ul class="task-list" id="completed-list"></ul>
+                <p class="empty" id="completed-empty">No completed tasks</p>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Right Column -->
+        <div class="right-col">
+          <section class="panel">
+            <div class="panel-header">
+              <h2>LOCAL STATS</h2>
+              <span class="status-indicator online">LIVE</span>
+            </div>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <span class="stat-label">TOTAL</span>
+                <span class="stat-value" id="stat-total">0</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">PENDING</span>
+                <span class="stat-value yellow" id="stat-pending">0</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">COMPLETED</span>
+                <span class="stat-value green" id="stat-completed">0</span>
+              </div>
+              <div class="stat-card">
+                <span class="stat-label">COMPLETION</span>
+                <span class="stat-value cyan" id="stat-rate">0<span class="stat-unit">%</span></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>PRIORITY BREAKDOWN</h2>
+            </div>
+            <div class="priority-bars">
+              <div class="priority-row">
+                <span class="priority-label high">HIGH</span>
+                <div class="bar-container">
+                  <div class="bar high" id="bar-high" style="width: 0%"></div>
+                </div>
+                <span class="priority-count" id="count-high">0</span>
+              </div>
+              <div class="priority-row">
+                <span class="priority-label medium">MED</span>
+                <div class="bar-container">
+                  <div class="bar medium" id="bar-medium" style="width: 0%"></div>
+                </div>
+                <span class="priority-count" id="count-medium">0</span>
+              </div>
+              <div class="priority-row">
+                <span class="priority-label low">LOW</span>
+                <div class="bar-container">
+                  <div class="bar low" id="bar-low" style="width: 0%"></div>
+                </div>
+                <span class="priority-count" id="count-low">0</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>ACTIVITY LOG</h2>
+            </div>
+            <ul class="activity-log" id="activity-log">
+              <li>System ready.</li>
+            </ul>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

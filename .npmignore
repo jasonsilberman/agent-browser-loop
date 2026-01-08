@@ -1,0 +1,27 @@
+# Dev/build files
+node_modules/
+*.tgz
+.git/
+.gitignore
+
+# Config files
+biome.jsonc
+tsconfig.json
+bun.lock
+
+# Examples and scripts (not needed for consumers)
+examples/
+scripts/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large assets not needed for package
+readme-header.png

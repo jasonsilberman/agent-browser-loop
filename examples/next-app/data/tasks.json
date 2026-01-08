@@ -1,0 +1,25 @@
+{
+  "operator": [
+    {
+      "id": "a3f10fb7-207c-4b17-bfe8-c8efe5603efe",
+      "title": "Validate pump pressure sensors",
+      "priority": "high",
+      "status": "pending",
+      "createdAt": "2026-01-10T20:25:14.300Z"
+    },
+    {
+      "id": "f7614a1c-c420-4484-b887-f2c6555c0095",
+      "title": "Check cooling system flow rate",
+      "priority": "medium",
+      "status": "completed",
+      "createdAt": "2026-01-10T20:25:22.833Z"
+    },
+    {
+      "id": "ae349d9b-a71d-4218-b779-b1df41f8595a",
+      "title": "Monitor vibration levels",
+      "priority": "low",
+      "status": "pending",
+      "createdAt": "2026-01-10T20:25:31.651Z"
+    }
+  ]
+}
