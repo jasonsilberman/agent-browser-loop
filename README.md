@@ -19,11 +19,11 @@ This doesn't eliminate human review - but it lets agents verify and unblock them
 Requires [Bun](https://bun.sh).
 
 ```bash
-bun add -D agent-browser-loop
+bun install -g agent-browser-loop
 agent-browser setup
 ```
 
-This installs Playwright Chromium and copies skill files to `.claude/skills/` so Claude, OpenCode, and other AI agents know how to use the browser.
+This installs the CLI globally, downloads Playwright Chromium, and copies skill files to `.claude/skills/` so Claude, OpenCode, and other AI agents know how to use the browser.
 
 ## Quick Start
 
