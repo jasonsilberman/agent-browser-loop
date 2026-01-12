@@ -581,16 +581,20 @@ const screenshotCommand = command({
       process.exit(1);
     }
 
-    const data = response.data as { base64: string };
+    // Handle both raw string (from executeCommand) and object format
+    const base64 =
+      typeof response.data === "string"
+        ? response.data
+        : (response.data as { base64: string }).base64;
 
     if (args.output) {
       // Write to file
-      const buffer = Buffer.from(data.base64, "base64");
+      const buffer = Buffer.from(base64, "base64");
       await Bun.write(args.output, buffer);
       console.log(`Screenshot saved to ${args.output}`);
     } else {
       // Output base64
-      console.log(data.base64);
+      console.log(base64);
     }
   },
 });
