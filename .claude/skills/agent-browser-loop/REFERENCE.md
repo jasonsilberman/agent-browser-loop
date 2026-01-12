@@ -16,15 +16,15 @@ agent-browser open <url> [options]
 | Flag | Description |
 |------|-------------|
 | `--headed` | Show browser window (default: headless) |
-| `--session <name>` | Named session for isolation |
-| `--viewport <WxH>` | Viewport size (default: 1280x720) |
+| `--new, -n` | Create new session with auto-generated ID |
+| `--session, -s <id>` | Target session (from `--new`) |
 | `--json` | Output as JSON |
 
 **Examples:**
 ```bash
 agent-browser open http://localhost:3000
 agent-browser open http://localhost:3000 --headed
-agent-browser open http://localhost:3000 --session test1 --viewport 1920x1080
+agent-browser open --new http://localhost:3000  # Output: Session: swift-fox
 ```
 
 ---
@@ -40,7 +40,8 @@ agent-browser act <actions...> [options]
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `--session <name>` | Target session |
+| `--new, -n` | Create new session with auto-generated ID |
+| `--session, -s <id>` | Target session (from `--new`) |
 | `--no-state` | Skip state in response |
 | `--json` | Output as JSON |
 
@@ -110,7 +111,7 @@ agent-browser wait [options]
 | `--not-text <string>` | Wait for text to disappear |
 | `--not-selector <css>` | Wait for element to disappear |
 | `--timeout <ms>` | Timeout in milliseconds (default: 30000) |
-| `--session <name>` | Target session |
+| `--session, -s <id>` | Target session (from `--new`) |
 | `--json` | Output as JSON |
 
 **Examples:**
@@ -148,7 +149,7 @@ agent-browser state [options]
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `--session <name>` | Target session |
+| `--session, -s <id>` | Target session (from `--new`) |
 | `--json` | Output as JSON |
 
 **Output includes:**
@@ -196,7 +197,7 @@ agent-browser screenshot [options]
 |------|-------------|
 | `--output, -o <path>` | Save to file (PNG) instead of base64 output |
 | `--full-page` | Capture full scrollable page |
-| `--session <name>` | Target session |
+| `--session, -s <id>` | Target session (from `--new`) |
 
 **Examples:**
 ```bash
@@ -214,7 +215,7 @@ agent-browser screenshot
 
 ### `close`
 
-Close browser and stop daemon.
+Close browser session or stop daemon.
 
 ```bash
 agent-browser close [options]
@@ -223,13 +224,24 @@ agent-browser close [options]
 **Options:**
 | Flag | Description |
 |------|-------------|
-| `--session <name>` | Close specific session only |
+| `--session, -s <id>` | Close specific session (daemon keeps running) |
+| `--all` | Close all sessions and stop daemon |
+
+---
+
+### `sessions`
+
+List all active browser sessions.
+
+```bash
+agent-browser sessions [--json]
+```
 
 ---
 
 ### `status`
 
-Check if daemon is running.
+Check if daemon is running and list active sessions.
 
 ```bash
 agent-browser status
@@ -304,7 +316,7 @@ These options work with most commands:
 
 | Flag | Description |
 |------|-------------|
-| `--session <name>` | Named session for isolation |
+| `--session, -s <id>` | Target session ID (from `--new`) |
 | `--json` | JSON output format |
 | `--help` | Show help |
 
@@ -360,15 +372,20 @@ agent-browser close
 
 ### Multiple Sessions
 ```bash
-# Session A: Admin user
-agent-browser open http://localhost:3000/login --session admin
-agent-browser act type:input_0:admin@test.com --session admin
+# Create sessions with auto-generated IDs
+agent-browser open --new http://localhost:3000/login  # Output: Session: swift-fox
+agent-browser open --new http://localhost:3000/login  # Output: Session: calm-river
 
-# Session B: Regular user  
-agent-browser open http://localhost:3000/login --session user
-agent-browser act type:input_0:user@test.com --session user
+# Interact with specific sessions
+agent-browser act -s swift-fox type:input_0:admin@test.com
+agent-browser act -s calm-river type:input_0:user@test.com
 
-# Close both
-agent-browser close --session admin
-agent-browser close --session user
+# List all sessions
+agent-browser sessions
+
+# Close specific session (daemon keeps running)
+agent-browser close -s swift-fox
+
+# Close all sessions and stop daemon
+agent-browser close --all
 ```

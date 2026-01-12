@@ -66,7 +66,8 @@ Every command returns the current page state - interactive elements, form values
 | `wait` | Wait for condition |
 | `state` | Get current page state |
 | `screenshot` | Capture screenshot |
-| `close` | Close browser and daemon |
+| `sessions` | List all active sessions |
+| `close` | Close session or daemon |
 | `setup` | Install browser + skill files |
 
 ### Actions
@@ -95,9 +96,27 @@ agent-browser wait --timeout 60000         # Custom timeout
 
 ```bash
 --headed              # Show browser window
---session <name>      # Named session
+--new                 # Create new session with auto-generated ID
+--session <id>        # Target specific session (from --new)
 --json                # JSON output
 --no-state            # Skip state in response
+```
+
+## Multi-Session
+
+Run multiple browser sessions in parallel:
+
+```bash
+# Create sessions with auto-generated IDs
+agent-browser open --new http://localhost:3000     # Output: Session: swift-fox
+agent-browser open --new http://localhost:3000     # Output: Session: calm-river
+
+# Target specific sessions
+agent-browser act -s swift-fox click:button_0
+agent-browser state -s calm-river
+
+# List all sessions
+agent-browser sessions
 ```
 
 ## State Output

@@ -20,6 +20,7 @@ import {
   cleanupDaemonFiles,
   DaemonClient,
   ensureDaemon,
+  ensureDaemonNewSession,
   isDaemonRunning,
 } from "./daemon";
 import { log, withLog } from "./log";
@@ -83,12 +84,17 @@ async function loadConfig(configPath: string): Promise<BrowserCliConfig> {
 // Shared CLI Options
 // ============================================================================
 
+const newSessionFlag = flag({
+  long: "new",
+  short: "n",
+  description: "Create a new session with auto-generated ID",
+});
+
 const sessionOption = option({
   long: "session",
   short: "s",
-  type: string,
-  defaultValue: () => "default",
-  description: "Session name (default: default)",
+  type: optional(string),
+  description: "Session ID (from --new)",
 });
 
 const headlessFlag = flag({
@@ -308,6 +314,7 @@ const openCommand = command({
   args: {
     url: positional({ type: string, displayName: "url" }),
     session: sessionOption,
+    new: newSessionFlag,
     headless: headlessFlag,
     headed: headedFlag,
     config: configOption,
@@ -315,7 +322,17 @@ const openCommand = command({
   },
   handler: async (args) => {
     const browserOptions = await resolveBrowserOptions(args);
-    const client = await ensureDaemon(args.session, browserOptions);
+
+    let client: DaemonClient;
+    if (args.new) {
+      client = await ensureDaemonNewSession(browserOptions);
+    } else if (args.session) {
+      client = await ensureDaemon(args.session, browserOptions, {
+        createIfMissing: false,
+      });
+    } else {
+      client = await ensureDaemon("default", browserOptions);
+    }
 
     const response = await client.act([{ type: "navigate", url: args.url }]);
 
@@ -325,9 +342,18 @@ const openCommand = command({
     }
 
     const data = response.data as { text?: string };
+    const sessionId = client.getSessionId();
+
     if (args.json) {
-      console.log(JSON.stringify(response.data, null, 2));
+      const jsonData =
+        typeof response.data === "object" && response.data !== null
+          ? { ...(response.data as object), sessionId }
+          : { data: response.data, sessionId };
+      console.log(JSON.stringify(jsonData, null, 2));
     } else {
+      if (args.new && sessionId) {
+        console.log(`Session: ${sessionId}`);
+      }
       console.log(data.text ?? "Navigated successfully");
     }
   },
@@ -341,6 +367,7 @@ const actCommand = command({
   args: {
     actions: restPositionals({ type: string, displayName: "actions" }),
     session: sessionOption,
+    new: newSessionFlag,
     headless: headlessFlag,
     headed: headedFlag,
     config: configOption,
@@ -360,7 +387,17 @@ const actCommand = command({
     }
 
     const browserOptions = await resolveBrowserOptions(args);
-    const client = await ensureDaemon(args.session, browserOptions);
+
+    let client: DaemonClient;
+    if (args.new) {
+      client = await ensureDaemonNewSession(browserOptions);
+    } else if (args.session) {
+      client = await ensureDaemon(args.session, browserOptions, {
+        createIfMissing: false,
+      });
+    } else {
+      client = await ensureDaemon("default", browserOptions);
+    }
 
     const actions = args.actions.map(parseAction);
     const response = await client.act(actions, {
@@ -376,6 +413,9 @@ const actCommand = command({
     if (args.json) {
       console.log(JSON.stringify(response.data, null, 2));
     } else {
+      if (args.new) {
+        console.log(`Session: ${client.getSessionId()}`);
+      }
       console.log(data.text ?? "Actions completed");
     }
 
@@ -558,26 +598,95 @@ const screenshotCommand = command({
 // --- close ---
 const closeCommand = command({
   name: "close",
-  description: "Close the browser and stop the daemon",
+  description: "Close the browser session or shutdown daemon",
   args: {
     session: sessionOption,
+    all: flag({
+      long: "all",
+      description: "Close all sessions and shutdown daemon",
+    }),
   },
   handler: async (args) => {
     const client = new DaemonClient(args.session);
 
     if (!(await client.ping())) {
       console.log("Daemon not running.");
-      cleanupDaemonFiles(args.session);
+      cleanupDaemonFiles();
       return;
     }
 
     try {
-      await client.shutdown();
-      console.log("Browser closed.");
+      if (args.all) {
+        await client.shutdown();
+        console.log("All sessions closed. Daemon stopped.");
+      } else {
+        const sessionId = args.session ?? "default";
+        const response = await client.closeSession(sessionId);
+        if (response.success) {
+          console.log(`Session "${sessionId}" closed.`);
+        } else {
+          console.error("Error:", response.error);
+          process.exit(1);
+        }
+      }
     } catch {
-      // Daemon may have already exited
-      cleanupDaemonFiles(args.session);
-      console.log("Browser closed.");
+      cleanupDaemonFiles();
+      console.log("Session closed.");
+    }
+  },
+});
+
+// --- sessions ---
+const sessionsCommand = command({
+  name: "sessions",
+  description: "List all active browser sessions",
+  args: {
+    json: jsonFlag,
+  },
+  handler: async (args) => {
+    const client = new DaemonClient();
+
+    if (!(await client.ping())) {
+      if (args.json) {
+        console.log(JSON.stringify({ sessions: [] }, null, 2));
+      } else {
+        console.log("Daemon not running. No active sessions.");
+      }
+      return;
+    }
+
+    const response = await client.list();
+
+    if (!response.success) {
+      console.error("Error:", response.error);
+      process.exit(1);
+    }
+
+    const data = response.data as {
+      sessions: Array<{
+        id: string;
+        url: string;
+        title: string;
+        busy: boolean;
+        lastUsed: number;
+      }>;
+    };
+
+    if (args.json) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      if (data.sessions.length === 0) {
+        console.log("No active sessions.");
+      } else {
+        console.log(`Sessions (${data.sessions.length}):\n`);
+        for (const s of data.sessions) {
+          const status = s.busy ? "[busy]" : "[idle]";
+          console.log(`  ${s.id} ${status}`);
+          console.log(`    ${s.title || "(no title)"}`);
+          console.log(`    ${s.url}`);
+          console.log();
+        }
+      }
     }
   },
 });
@@ -586,14 +695,40 @@ const closeCommand = command({
 const statusCommand = command({
   name: "status",
   description: "Check if daemon is running",
-  args: {
-    session: sessionOption,
-  },
-  handler: async (args) => {
-    const running = isDaemonRunning(args.session);
-    console.log(
-      `Session "${args.session}": ${running ? "running" : "not running"}`,
-    );
+  args: {},
+  handler: async () => {
+    const running = isDaemonRunning();
+    if (running) {
+      console.log("Daemon is running.");
+      // Try to list sessions
+      const client = new DaemonClient();
+      if (await client.ping()) {
+        const response = await client.list();
+        if (response.success) {
+          const data = response.data as {
+            sessions: Array<{
+              id: string;
+              url: string;
+              title: string;
+              busy: boolean;
+            }>;
+          };
+          if (data.sessions.length === 0) {
+            console.log("No active sessions.");
+          } else {
+            console.log(`\nSessions (${data.sessions.length}):`);
+            for (const s of data.sessions) {
+              const status = s.busy ? "[busy]" : "[idle]";
+              console.log(`  ${s.id} ${status}`);
+              console.log(`    ${s.title || "(no title)"}`);
+              console.log(`    ${s.url}`);
+            }
+          }
+        }
+      }
+    } else {
+      console.log("Daemon is not running.");
+    }
   },
 });
 
@@ -773,6 +908,7 @@ const cli = subcommands({
     state: stateCommand,
     screenshot: screenshotCommand,
     close: closeCommand,
+    sessions: sessionsCommand,
     status: statusCommand,
 
     // Setup & configuration

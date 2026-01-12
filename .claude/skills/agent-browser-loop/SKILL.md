@@ -165,15 +165,25 @@ agent-browser close
 # Headed mode (visible browser)
 agent-browser open http://localhost:3000 --headed
 
-# Named session
-agent-browser open http://localhost:3000 --session my-test
-agent-browser act click:button_0 --session my-test
-
 # JSON output
 agent-browser state --json
 
 # Skip state in response
 agent-browser act click:button_0 --no-state
+```
+
+## Multi-Session
+
+Run multiple browsers in parallel with `--new`:
+
+```bash
+agent-browser open --new http://localhost:3000     # Output: Session: swift-fox
+agent-browser open --new http://localhost:3000     # Output: Session: calm-river
+
+agent-browser act -s swift-fox click:button_0      # Target session
+agent-browser sessions                              # List all
+agent-browser close -s swift-fox                    # Close one session
+agent-browser close --all                           # Close all, stop daemon
 ```
 
 ## Screenshots
