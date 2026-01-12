@@ -3,6 +3,7 @@ import { chromium } from "playwright";
 import * as actions from "./actions";
 import { findChromeExecutable } from "./chrome";
 import { log } from "./log";
+import { ElementRefStore } from "./ref-store";
 import { formatStateText, getState } from "./state";
 import type {
   BrowserConfig,
@@ -33,12 +34,14 @@ export class AgentBrowser {
   private networkLogLimit: number;
   private usePersistentContext = false;
   private lastState: BrowserState | null = null;
+  private refStore: ElementRefStore = new ElementRefStore();
 
   constructor(options: AgentBrowserOptions = {}) {
     this.config = {
       headless: options.headless ?? true,
       executablePath: options.executablePath,
       useSystemChrome: options.useSystemChrome ?? true,
+      allowSystemChromeHeadless: options.allowSystemChromeHeadless,
       viewportWidth: options.viewportWidth ?? 1280,
       viewportHeight: options.viewportHeight ?? 720,
       userDataDir: options.userDataDir,
@@ -60,8 +63,27 @@ export class AgentBrowser {
       throw new Error("Browser already started");
     }
 
-    const resolvedExecutablePath = this.config.useSystemChrome
-      ? this.config.executablePath || findChromeExecutable()
+    const isDarwin = process.platform === "darwin";
+    let useSystemChrome = this.config.useSystemChrome ?? true;
+    let executablePath = this.config.executablePath;
+
+    if (
+      isDarwin &&
+      this.config.headless &&
+      (useSystemChrome || executablePath) &&
+      !this.config.allowSystemChromeHeadless
+    ) {
+      log
+        .withMetadata({ executablePath })
+        .warn(
+          "Headless system Chrome can crash on macOS. Falling back to bundled Chromium. Set allowSystemChromeHeadless to true to override.",
+        );
+      useSystemChrome = false;
+      executablePath = undefined;
+    }
+
+    const resolvedExecutablePath = useSystemChrome
+      ? executablePath || findChromeExecutable()
       : undefined;
 
     log
@@ -160,6 +182,7 @@ export class AgentBrowser {
     this.networkLogs = [];
     this.networkCaptureEnabled = false;
     this.usePersistentContext = false;
+    this.refStore.clear();
   }
 
   /**
@@ -190,15 +213,21 @@ export class AgentBrowser {
     options?: Omit<NavigateOptions, "url">,
   ): Promise<void> {
     await actions.navigate(this.getPage(), { url, ...options });
+    this.refStore.clear();
   }
 
   /**
    * Get rich state of the current page
-   * Also injects data-ref attributes for element targeting
+   * Stores element refs server-side (no DOM modification)
    */
   async getState(options?: GetStateOptions): Promise<BrowserState> {
-    // getState now handles ref injection internally
-    const state = await getState(this.getPage(), this.getContext(), options);
+    // getState now stores refs in this.refStore instead of injecting into DOM
+    const state = await getState(
+      this.getPage(),
+      this.getContext(),
+      this.refStore,
+      options,
+    );
     const result = {
       ...state,
       errors: {
@@ -254,14 +283,14 @@ export class AgentBrowser {
    * Click an element
    */
   async click(options: ClickOptions): Promise<void> {
-    await actions.click(this.getPage(), options);
+    await actions.click(this.getPage(), this.refStore, options);
   }
 
   /**
    * Type text into an element
    */
   async type(options: TypeOptions): Promise<void> {
-    await actions.type(this.getPage(), options);
+    await actions.type(this.getPage(), this.refStore, options);
   }
 
   /**
@@ -429,7 +458,7 @@ export class AgentBrowser {
    * Hover over an element
    */
   async hover(options: { ref?: string; index?: number }): Promise<void> {
-    await actions.hover(this.getPage(), options);
+    await actions.hover(this.getPage(), this.refStore, options);
   }
 
   /**
@@ -440,7 +469,7 @@ export class AgentBrowser {
     index?: number;
     value: string | string[];
   }): Promise<void> {
-    await actions.select(this.getPage(), options);
+    await actions.select(this.getPage(), this.refStore, options);
   }
 
   /**
@@ -553,6 +582,13 @@ export class AgentBrowser {
       await Bun.write(path, JSON.stringify(state, null, 2));
     }
     return state;
+  }
+
+  /**
+   * Get the element ref store (for advanced usage/testing)
+   */
+  getRefStore(): ElementRefStore {
+    return this.refStore;
   }
 }
 

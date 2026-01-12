@@ -7,6 +7,8 @@ export interface BrowserConfig {
   executablePath?: string;
   /** Prefer system Chrome/Chromium over bundled Playwright (default: true) */
   useSystemChrome?: boolean;
+  /** Allow system Chrome in headless mode on macOS (default: false) */
+  allowSystemChromeHeadless?: boolean;
   /** Viewport width (default: 1280) */
   viewportWidth?: number;
   /** Viewport height (default: 720) */

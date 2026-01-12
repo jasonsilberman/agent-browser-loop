@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import type { ElementRefStore, ElementSelectors } from "./ref-store";
 import type {
   BrowserState,
   GetStateOptions,
@@ -31,7 +32,7 @@ const INTERACTIVE_SELECTORS = [
   "[tabindex]",
 ].join(", ");
 
-interface ElementInfo {
+interface RawElementInfo {
   tag: string;
   role: string;
   name: string;
@@ -40,23 +41,119 @@ interface ElementInfo {
   enabled: boolean;
   attributes: Record<string, string>;
   boundingBox: { x: number; y: number; width: number; height: number } | null;
-}
-
-interface ElementInfoWithRef extends ElementInfo {
-  ref: string;
+  // Selector info for server-side storage
+  xpath: string;
+  cssPath: string;
+  fingerprint: string | null;
+  // For generating ref
+  refBase: string;
+  // Fingerprint data for validation
+  fingerprintData: {
+    tagName: string;
+    role?: string;
+    type?: string;
+    name?: string;
+    placeholder?: string;
+  };
 }
 
 /**
- * Extract interactive elements from the page using DOM queries
- * Assumes injectElementRefs has already been called
+ * Extract interactive elements from the page WITHOUT modifying the DOM
+ * Returns raw element info including selectors for server-side ref storage
  */
-async function extractInteractiveElements(
+async function extractInteractiveElementsRaw(
   page: Page,
-): Promise<InteractiveElement[]> {
-  const elementInfos = await page.evaluate((selector) => {
-    // Only get elements that match interactive selectors and have data-ref
-    const elements = Array.from(document.querySelectorAll(selector));
-    const results: ElementInfoWithRef[] = [];
+): Promise<RawElementInfo[]> {
+  return await page.evaluate((selector) => {
+    // Helper functions (must be inside evaluate)
+    const generateXPath = (element: Element): string => {
+      const parts: string[] = [];
+      let current: Element | null = element;
+
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        let index = 1;
+        let sibling: Element | null = current.previousElementSibling;
+
+        while (sibling) {
+          if (sibling.tagName === current.tagName) {
+            index++;
+          }
+          sibling = sibling.previousElementSibling;
+        }
+
+        const tagName = current.tagName.toLowerCase();
+        parts.unshift(`${tagName}[${index}]`);
+        current = current.parentElement;
+      }
+
+      return `/${parts.join("/")}`;
+    };
+
+    const generateCssPath = (element: Element): string => {
+      const parts: string[] = [];
+      let current: Element | null = element;
+
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        let selector = current.tagName.toLowerCase();
+
+        const id = current.getAttribute("id");
+        if (id) {
+          try {
+            if (document.querySelectorAll(`#${CSS.escape(id)}`).length === 1) {
+              parts.unshift(`#${CSS.escape(id)}`);
+              break;
+            }
+          } catch {
+            // Invalid ID, skip
+          }
+        }
+
+        const parent = current.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children);
+          const sameTagSiblings = siblings.filter(
+            (s) => s.tagName === current!.tagName,
+          );
+          if (sameTagSiblings.length > 1) {
+            const index = sameTagSiblings.indexOf(current) + 1;
+            selector += `:nth-of-type(${index})`;
+          }
+        }
+
+        parts.unshift(selector);
+        current = current.parentElement;
+      }
+
+      return parts.join(" > ");
+    };
+
+    const generateFingerprint = (element: Element): string | null => {
+      const tag = element.tagName.toLowerCase();
+      const attrs: string[] = [];
+
+      const type = element.getAttribute("type");
+      const name = element.getAttribute("name");
+      const placeholder = element.getAttribute("placeholder");
+      const role = element.getAttribute("role");
+      const ariaLabel = element.getAttribute("aria-label");
+      const dataTestId = element.getAttribute("data-testid");
+
+      if (dataTestId) {
+        return `[data-testid="${CSS.escape(dataTestId)}"]`;
+      }
+
+      if (type) attrs.push(`[type="${CSS.escape(type)}"]`);
+      if (name) attrs.push(`[name="${CSS.escape(name)}"]`);
+      if (placeholder) attrs.push(`[placeholder="${CSS.escape(placeholder)}"]`);
+      if (role) attrs.push(`[role="${CSS.escape(role)}"]`);
+      if (ariaLabel) attrs.push(`[aria-label="${CSS.escape(ariaLabel)}"]`);
+
+      if (attrs.length === 0) {
+        return null;
+      }
+
+      return tag + attrs.join("");
+    };
 
     const normalizeText = (value?: string | null) =>
       value?.replace(/\s+/g, " ").trim() ?? "";
@@ -109,17 +206,52 @@ async function extractInteractiveElements(
       return "";
     };
 
+    const normalizeBase = (value: string) => {
+      const trimmed = value.trim().toLowerCase();
+      const normalized = trimmed.replace(/[^a-z0-9_-]+/g, "-");
+      return normalized.length > 0 ? normalized : "element";
+    };
+
+    const getElementBase = (el: HTMLElement) => {
+      const role = el.getAttribute("role");
+      if (role) {
+        return normalizeBase(role);
+      }
+      const tag = el.tagName.toLowerCase();
+      if (tag === "a") return "link";
+      if (tag === "button") return "button";
+      if (tag === "input") {
+        const type = (el as HTMLInputElement).type;
+        if (type === "checkbox") return "checkbox";
+        if (type === "radio") return "radio";
+        if (type === "submit" || type === "button") return "button";
+        return "input";
+      }
+      if (tag === "textarea") return "textarea";
+      if (tag === "select") return "select";
+      return normalizeBase(tag);
+    };
+
+    const elements = Array.from(document.querySelectorAll(selector));
+    const results: RawElementInfo[] = [];
+
     for (const el of elements) {
       const htmlEl = el as HTMLElement;
-      const ref = htmlEl.getAttribute("data-ref");
-      if (!ref) {
+
+      // Skip hidden elements
+      const style = window.getComputedStyle(htmlEl);
+      if (style.display === "none" || style.visibility === "hidden") {
         continue;
       }
 
-      // Get bounding box
       const rect = htmlEl.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        const tag = htmlEl.tagName.toLowerCase();
+        if (!["input", "textarea", "select"].includes(tag)) {
+          continue;
+        }
+      }
 
-      const style = window.getComputedStyle(htmlEl);
       const isVisible =
         style.display !== "none" &&
         style.visibility !== "hidden" &&
@@ -197,12 +329,16 @@ async function extractInteractiveElements(
       if (valueText) attributes.value = valueText;
       if (isChecked) attributes.checked = "true";
 
+      // Generate selectors
+      const xpath = generateXPath(htmlEl);
+      const cssPath = generateCssPath(htmlEl);
+      const fingerprint = generateFingerprint(htmlEl);
+
       results.push({
         tag: htmlEl.tagName.toLowerCase(),
         role,
         name: name || text.slice(0, 50),
         text,
-        ref,
         visible: isVisible,
         enabled: !(htmlEl as HTMLInputElement).disabled,
         attributes,
@@ -212,24 +348,68 @@ async function extractInteractiveElements(
           width: rect.width,
           height: rect.height,
         },
+        xpath,
+        cssPath,
+        fingerprint,
+        refBase: getElementBase(htmlEl),
+        fingerprintData: {
+          tagName: htmlEl.tagName.toLowerCase(),
+          role: role || undefined,
+          type: htmlEl.getAttribute("type") || undefined,
+          name: fieldName || undefined,
+          placeholder: placeholder || undefined,
+        },
       });
     }
 
     return results;
   }, INTERACTIVE_SELECTORS);
+}
 
-  // Convert to InteractiveElement format, using ref from data-ref attribute
-  return elementInfos.map((info, index) => ({
-    index,
-    role: info.role,
-    name: info.name,
-    text: info.text,
-    ref: info.ref, // Use the actual ref from the DOM
-    visible: info.visible,
-    enabled: info.enabled,
-    boundingBox: info.boundingBox === null ? undefined : info.boundingBox,
-    attributes: info.attributes,
-  }));
+/**
+ * Extract interactive elements and store refs in the provided store
+ * Returns InteractiveElement array with assigned refs
+ */
+export async function extractInteractiveElements(
+  page: Page,
+  refStore: ElementRefStore,
+): Promise<InteractiveElement[]> {
+  const rawElements = await extractInteractiveElementsRaw(page);
+
+  // Clear and rebuild the ref store
+  refStore.clear();
+
+  // Track used refs and counters for generating unique refs
+  const counters: Record<string, number> = {};
+
+  return rawElements.map((raw, index) => {
+    // Generate unique ref
+    const base = raw.refBase;
+    const counter = counters[base] ?? 0;
+    const ref = `${base}_${counter}`;
+    counters[base] = counter + 1;
+
+    // Store selectors for later resolution
+    const selectors: ElementSelectors = {
+      xpath: raw.xpath,
+      cssPath: raw.cssPath,
+      fingerprint: raw.fingerprint ?? undefined,
+    };
+
+    refStore.set(ref, index, selectors, raw.fingerprintData);
+
+    return {
+      index,
+      role: raw.role,
+      name: raw.name,
+      text: raw.text,
+      ref,
+      visible: raw.visible,
+      enabled: raw.enabled,
+      boundingBox: raw.boundingBox === null ? undefined : raw.boundingBox,
+      attributes: raw.attributes,
+    };
+  });
 }
 
 /**
@@ -400,10 +580,12 @@ export function formatStateText(state: BrowserState): string {
 
 /**
  * Get the current state of the browser/page
+ * Now requires a refStore to store element references server-side
  */
 export async function getState(
   page: Page,
   context: BrowserContext,
+  refStore: ElementRefStore,
   options: GetStateOptions = {},
 ): Promise<BrowserState> {
   const {
@@ -421,19 +603,24 @@ export async function getState(
   // Wait for page to be stable
   await page.waitForLoadState("domcontentloaded");
 
-  // Inject refs first so extraction and targeting use same indices
-  await injectElementRefs(page);
-
-  // Extract state in parallel
-  const [url, title, elements, accessibilityTree, scrollPosition, tabs] =
-    await Promise.all([
-      page.url(),
-      page.title(),
-      includeElements ? extractInteractiveElements(page) : [],
-      includeTree ? buildAccessibilityTree(page, treeLimit) : "",
-      getScrollPosition(page),
-      getTabsInfo(context, page),
-    ]);
+  // Extract state in parallel - NO DOM MODIFICATION
+  // Always rebuild refs even if elements aren't returned.
+  const [
+    url,
+    title,
+    elementsSnapshot,
+    accessibilityTree,
+    scrollPosition,
+    tabs,
+  ] = await Promise.all([
+    page.url(),
+    page.title(),
+    extractInteractiveElements(page, refStore),
+    includeTree ? buildAccessibilityTree(page, treeLimit) : "",
+    getScrollPosition(page),
+    getTabsInfo(context, page),
+  ]);
+  const elements = includeElements ? elementsSnapshot : [];
 
   // Optional screenshot
   let screenshot: string | undefined;
@@ -509,94 +696,11 @@ function sliceTree(
 }
 
 /**
- * Inject data-ref attributes into the page for element targeting
- * Returns the number of elements tagged
+ * @deprecated No longer injects refs into DOM - refs are now stored server-side
+ * This function is kept for backwards compatibility but does nothing
  */
-export async function injectElementRefs(page: Page): Promise<number> {
-  return await page.evaluate((selector) => {
-    const elements = Array.from(document.querySelectorAll(selector));
-    const used = new Set<string>();
-    const counters: Record<string, number> = {};
-
-    const normalizeBase = (value: string) => {
-      const trimmed = value.trim().toLowerCase();
-      const normalized = trimmed.replace(/[^a-z0-9_-]+/g, "-");
-      return normalized.length > 0 ? normalized : "element";
-    };
-
-    const getElementBase = (el: HTMLElement) => {
-      const role = el.getAttribute("role");
-      if (role) {
-        return normalizeBase(role);
-      }
-      const tag = el.tagName.toLowerCase();
-      if (tag === "a") return "link";
-      if (tag === "button") return "button";
-      if (tag === "input") {
-        const type = (el as HTMLInputElement).type;
-        if (type === "checkbox") return "checkbox";
-        if (type === "radio") return "radio";
-        if (type === "submit" || type === "button") return "button";
-        return "input";
-      }
-      if (tag === "textarea") return "textarea";
-      if (tag === "select") return "select";
-      return normalizeBase(tag);
-    };
-
-    document.querySelectorAll("[data-ref]").forEach((el) => {
-      const ref = el.getAttribute("data-ref");
-      if (ref) {
-        used.add(ref);
-        const match = ref.match(/^([a-z0-9_-]+)_(\d+)$/i);
-        if (match) {
-          const base = match[1];
-          const index = Number(match[2]);
-          if (!Number.isNaN(index)) {
-            counters[base] = Math.max(counters[base] ?? 0, index + 1);
-          }
-        }
-      }
-    });
-
-    let index = 0;
-
-    for (const el of elements) {
-      const htmlEl = el as HTMLElement;
-      let ref = htmlEl.getAttribute("data-ref");
-
-      // Skip hidden elements unless they already have a stable ref.
-      const style = window.getComputedStyle(htmlEl);
-      if (!ref) {
-        if (style.display === "none" || style.visibility === "hidden") {
-          continue;
-        }
-
-        const rect = htmlEl.getBoundingClientRect();
-        if (rect.width === 0 && rect.height === 0) {
-          const tag = htmlEl.tagName.toLowerCase();
-          if (!["input", "textarea", "select"].includes(tag)) {
-            continue;
-          }
-        }
-      }
-
-      if (!ref) {
-        const base = getElementBase(htmlEl);
-        let next = counters[base] ?? 0;
-        while (used.has(`${base}_${next}`)) {
-          next++;
-        }
-        ref = `${base}_${next}`;
-        counters[base] = next + 1;
-        used.add(ref);
-        htmlEl.setAttribute("data-ref", ref);
-      }
-
-      htmlEl.setAttribute("data-index", String(index));
-      index++;
-    }
-
-    return used.size;
-  }, INTERACTIVE_SELECTORS);
+export async function injectElementRefs(_page: Page): Promise<number> {
+  // No-op: refs are now stored server-side in ElementRefStore
+  // This function is kept for API compatibility but should not be used
+  return 0;
 }

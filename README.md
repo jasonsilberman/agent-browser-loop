@@ -172,6 +172,8 @@ export default defineBrowserConfig({
 });
 ```
 
+On macOS, headless system Chrome can crash during AppKit startup. By default, the CLI falls back to bundled Playwright Chromium when `headless: true`. If you explicitly want system Chrome in headless mode, set `allowSystemChromeHeadless: true`.
+
 ## What This Is NOT For
 
 This tool is for agents to test their own code. It is **not** for:

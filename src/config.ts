@@ -32,6 +32,7 @@ export const browserCliConfigSchema = z.looseObject({
   headless: z.boolean().optional(),
   executablePath: z.string().optional(),
   useSystemChrome: z.boolean().optional(),
+  allowSystemChromeHeadless: z.boolean().optional(),
   viewportWidth: z.number().int().optional(),
   viewportHeight: z.number().int().optional(),
   userDataDir: z.string().optional(),

@@ -1,4 +1,5 @@
 import type { Page, Request } from "playwright";
+import type { ElementRefStore } from "./ref-store";
 import type {
   ClickOptions,
   NavigateOptions,
@@ -7,27 +8,26 @@ import type {
 } from "./types";
 
 /**
- * Get a locator for an element by ref or index
- * After calling getState(), elements have data-ref attributes injected
+ * Get a locator for an element by ref or index using the ref store
+ * The ref store contains selectors generated during getState()
  */
-function getLocator(page: Page, options: { ref?: string; index?: number }) {
-  if (options.ref) {
-    return page.locator(`[data-ref="${options.ref}"]`);
-  }
-  if (options.index !== undefined) {
-    // Use data-index (injected by getState). Fallback to legacy e{index} refs.
-    return page.locator(
-      `[data-index="${options.index}"], [data-ref="e${options.index}"]`,
-    );
-  }
-  throw new Error("Must provide either ref or index");
+async function getLocator(
+  page: Page,
+  refStore: ElementRefStore,
+  options: { ref?: string; index?: number },
+) {
+  return await refStore.resolveLocator(page, options);
 }
 
 /**
  * Click an element
  */
-export async function click(page: Page, options: ClickOptions): Promise<void> {
-  const locator = getLocator(page, options);
+export async function click(
+  page: Page,
+  refStore: ElementRefStore,
+  options: ClickOptions,
+): Promise<void> {
+  const locator = await getLocator(page, refStore, options);
 
   const clickOptions: Parameters<typeof locator.click>[0] = {
     button: options.button,
@@ -44,8 +44,12 @@ export async function click(page: Page, options: ClickOptions): Promise<void> {
 /**
  * Type text into an element
  */
-export async function type(page: Page, options: TypeOptions): Promise<void> {
-  const locator = getLocator(page, options);
+export async function type(
+  page: Page,
+  refStore: ElementRefStore,
+  options: TypeOptions,
+): Promise<void> {
+  const locator = await getLocator(page, refStore, options);
 
   // Clear existing text if requested
   if (options.clear) {
@@ -129,9 +133,10 @@ export async function waitForElement(
  */
 export async function hover(
   page: Page,
+  refStore: ElementRefStore,
   options: { ref?: string; index?: number },
 ): Promise<void> {
-  const locator = getLocator(page, options);
+  const locator = await getLocator(page, refStore, options);
   await locator.hover();
 }
 
@@ -140,9 +145,10 @@ export async function hover(
  */
 export async function select(
   page: Page,
+  refStore: ElementRefStore,
   options: { ref?: string; index?: number; value: string | string[] },
 ): Promise<void> {
-  const locator = getLocator(page, options);
+  const locator = await getLocator(page, refStore, options);
   await locator.selectOption(options.value);
 }
 

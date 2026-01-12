@@ -35,6 +35,9 @@ export {
   isDaemonRunning,
   startDaemon,
 } from "./daemon";
+export type { ElementSelectors, StoredElementRef } from "./ref-store";
+// Ref store for server-side element reference management
+export { ElementRefStore } from "./ref-store";
 // Server
 export type { BrowserServerConfig } from "./server";
 export { startBrowserServer } from "./server";

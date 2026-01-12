@@ -147,6 +147,7 @@ async function resolveBrowserOptions(args: {
     headless,
     executablePath: config?.executablePath,
     useSystemChrome,
+    allowSystemChromeHeadless: config?.allowSystemChromeHeadless,
     viewportWidth: config?.viewportWidth,
     viewportHeight: config?.viewportHeight,
     userDataDir: config?.userDataDir,
@@ -321,7 +322,10 @@ const openCommand = command({
     json: jsonFlag,
   },
   handler: async (args) => {
-    const browserOptions = await resolveBrowserOptions(args);
+    const browserOptions = await resolveBrowserOptions({
+      ...args,
+      configPath: args.config,
+    });
 
     let client: DaemonClient;
     if (args.new) {
@@ -386,7 +390,10 @@ const actCommand = command({
       process.exit(1);
     }
 
-    const browserOptions = await resolveBrowserOptions(args);
+    const browserOptions = await resolveBrowserOptions({
+      ...args,
+      configPath: args.config,
+    });
 
     let client: DaemonClient;
     if (args.new) {
@@ -833,6 +840,7 @@ const serverCommand = command({
         headless,
         executablePath: args.executablePath ?? config?.executablePath,
         useSystemChrome,
+        allowSystemChromeHeadless: config?.allowSystemChromeHeadless,
         viewportWidth: args.viewportWidth || config?.viewportWidth,
         viewportHeight: args.viewportHeight || config?.viewportHeight,
         userDataDir: args.userDataDir ?? config?.userDataDir,

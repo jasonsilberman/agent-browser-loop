@@ -239,14 +239,6 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
     return session;
   }
 
-  function getSession(sessionId: string): DaemonSession {
-    const session = sessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-    return session;
-  }
-
   function getOrDefaultSession(sessionId?: string): DaemonSession {
     const id = sessionId ?? "default";
     const session = sessions.get(id);
@@ -333,16 +325,13 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
               parseResult.data,
               sessions,
               createSession,
-              getSession,
               getOrDefaultSession,
               closeSession,
-              idGenerator,
-              defaultOptions,
             );
 
             // Handle shutdown
             if (parseResult.data.type === "shutdown") {
-              socket.write(JSON.stringify(response) + "\n");
+              socket.write(`${JSON.stringify(response)}\n`);
               shutdown();
               return;
             }
@@ -355,7 +344,7 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
           };
         }
 
-        socket.write(JSON.stringify(response) + "\n");
+        socket.write(`${JSON.stringify(response)}\n`);
       }
     });
 
@@ -411,11 +400,8 @@ async function handleRequest(
     sessionId?: string,
     options?: AgentBrowserOptions,
   ) => Promise<DaemonSession>,
-  getSession: (sessionId: string) => DaemonSession,
   getOrDefaultSession: (sessionId?: string) => DaemonSession,
   closeSession: (sessionId: string) => Promise<void>,
-  idGenerator: ReturnType<typeof createIdGenerator>,
-  defaultOptions: AgentBrowserOptions,
 ): Promise<DaemonResponse> {
   const { id } = request;
 
@@ -613,7 +599,7 @@ export class DaemonClient {
       let buffer = "";
 
       socket.on("connect", () => {
-        socket.write(JSON.stringify(request) + "\n");
+        socket.write(`${JSON.stringify(request)}\n`);
       });
 
       socket.on("data", (data) => {
@@ -914,7 +900,7 @@ async function spawnDaemon(
 
   const child = spawn(
     process.execPath,
-    ["--bun", import.meta.dirname + "/daemon-entry.ts", "--config", configPath],
+    ["--bun", `${import.meta.dirname}/daemon-entry.ts`, "--config", configPath],
     {
       detached: true,
       stdio: "ignore",

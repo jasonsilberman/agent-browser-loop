@@ -457,6 +457,12 @@ body {
   opacity: 0.5;
 }
 
+.task-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+}
+
 .task-item.completed .task-title {
   text-decoration: line-through;
 }
@@ -479,12 +485,6 @@ body {
 .task-checkbox.checked {
   background: var(--green);
   border-color: var(--green);
-}
-
-.task-title {
-  flex: 1;
-  font-size: 13px;
-  color: var(--text);
 }
 
 .priority {
