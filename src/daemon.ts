@@ -3,6 +3,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { z } from "zod";
+import { VERSION } from "./version";
 import { type AgentBrowserOptions, createBrowser } from "./browser";
 import {
   type Command,
@@ -157,6 +158,25 @@ export function getConfigPath(): string {
   return path.join(DAEMON_DIR, "daemon.config.json");
 }
 
+export function getVersionPath(): string {
+  return path.join(DAEMON_DIR, "daemon.version");
+}
+
+/**
+ * Get the version of the currently running daemon (if any)
+ */
+export function getDaemonVersion(): string | null {
+  const versionPath = getVersionPath();
+  if (!fs.existsSync(versionPath)) {
+    return null;
+  }
+  try {
+    return fs.readFileSync(versionPath, "utf-8").trim();
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================================
 // Daemon Status
 // ============================================================================
@@ -183,6 +203,7 @@ export function cleanupDaemonFiles(): void {
   const socketPath = getSocketPath();
   const pidPath = getPidPath();
   const configPath = getConfigPath();
+  const versionPath = getVersionPath();
 
   try {
     if (fs.existsSync(socketPath)) fs.unlinkSync(socketPath);
@@ -192,6 +213,9 @@ export function cleanupDaemonFiles(): void {
   } catch {}
   try {
     if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
+  } catch {}
+  try {
+    if (fs.existsSync(versionPath)) fs.unlinkSync(versionPath);
   } catch {}
 }
 
@@ -210,9 +234,13 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
   const socketPath = getSocketPath();
   const pidPath = getPidPath();
   const configPath = getConfigPath();
+  const versionPath = getVersionPath();
 
   ensureDaemonDir();
   cleanupDaemonFiles();
+
+  // Write version file so CLI can detect version mismatch
+  fs.writeFileSync(versionPath, VERSION);
 
   // Multi-session state
   const sessions = new Map<string, DaemonSession>();
@@ -815,6 +843,34 @@ export class DaemonClient {
 // ============================================================================
 
 /**
+ * Force restart the daemon by shutting down any existing one
+ */
+async function forceRestartDaemon(
+  browserOptions?: AgentBrowserOptions,
+): Promise<void> {
+  const client = new DaemonClient();
+
+  // Try to gracefully shutdown existing daemon
+  if (isDaemonRunning()) {
+    try {
+      if (await client.ping()) {
+        await client.shutdown();
+        // Wait a bit for shutdown
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    } catch {
+      // Ignore errors during shutdown
+    }
+  }
+
+  // Clean up any stale files
+  cleanupDaemonFiles();
+
+  // Spawn fresh daemon
+  await spawnDaemon(browserOptions);
+}
+
+/**
  * Ensure daemon is running and return a client.
  * If sessionId is provided, set the client to use that session.
  * If createIfMissing is true (default), create the "default" session if it doesn't exist.
@@ -829,6 +885,41 @@ export async function ensureDaemon(
 
   // Check if daemon is already running
   if (isDaemonRunning()) {
+    // Check for version mismatch - force restart if versions don't match
+    const daemonVersion = getDaemonVersion();
+    if (daemonVersion && daemonVersion !== VERSION) {
+      // If we're not allowed to create sessions, tell user to re-open
+      if (!createIfMissing) {
+        throw new Error(
+          `Daemon was upgraded (${daemonVersion} -> ${VERSION}). Please run 'agent-browser open <url>' to start a new session.`,
+        );
+      }
+
+      console.log(
+        `Daemon version mismatch (daemon: ${daemonVersion}, cli: ${VERSION}), restarting...`,
+      );
+      await forceRestartDaemon(browserOptions);
+
+      // Wait for new daemon to be ready
+      const maxAttempts = 50;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        if (await client.ping()) {
+          if (sessionId === "default") {
+            const createResp = await client.create({
+              sessionId: "default",
+              browserOptions,
+            });
+            if (!createResp.success) {
+              throw new Error(`Failed to create session: ${createResp.error}`);
+            }
+          }
+          return client;
+        }
+      }
+      throw new Error("Failed to restart daemon after version mismatch");
+    }
+
     // Verify it's responsive
     if (await client.ping()) {
       // Daemon is running, check if session exists or create default
@@ -893,6 +984,32 @@ export async function ensureDaemonNewSession(
 
   // Check if daemon is already running
   if (isDaemonRunning()) {
+    // Check for version mismatch - force restart if versions don't match
+    const daemonVersion = getDaemonVersion();
+    if (daemonVersion && daemonVersion !== VERSION) {
+      console.log(
+        `Daemon version mismatch (daemon: ${daemonVersion}, cli: ${VERSION}), restarting...`,
+      );
+      await forceRestartDaemon(browserOptions);
+
+      // Wait for new daemon to be ready and create session
+      const maxAttempts = 50;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        if (await client.ping()) {
+          const createResp = await client.create({ browserOptions });
+          if (!createResp.success) {
+            throw new Error(`Failed to create session: ${createResp.error}`);
+          }
+          const newSessionId = (createResp.data as { sessionId: string })
+            .sessionId;
+          client.setSession(newSessionId);
+          return client;
+        }
+      }
+      throw new Error("Failed to restart daemon after version mismatch");
+    }
+
     if (await client.ping()) {
       // Create new session with auto-generated ID
       const createResp = await client.create({ browserOptions });

@@ -13,6 +13,7 @@ import {
   string,
   subcommands,
 } from "cmd-ts";
+import { VERSION } from "./version";
 import type { AgentBrowserOptions } from "./browser";
 import type { StepAction } from "./commands";
 import { parseBrowserConfig } from "./config";
@@ -89,6 +90,8 @@ async function loadConfig(configPath: string): Promise<BrowserCliConfig> {
   return parseBrowserConfig(exported);
 }
 
+// ============================================================================
+// Shared CLI Options
 // ============================================================================
 // Shared CLI Options
 // ============================================================================
@@ -579,13 +582,9 @@ const waitCommand = command({
       process.exit(1);
     }
 
-    const client = new DaemonClient(args.session);
-    if (!(await client.ping())) {
-      console.error(
-        "Daemon not running. Use 'agent-browser open <url>' first.",
-      );
-      process.exit(1);
-    }
+    const client = await ensureDaemon(args.session ?? "default", undefined, {
+      createIfMissing: false,
+    });
 
     const response = await client.wait(condition, { timeoutMs: args.timeout });
 
@@ -612,13 +611,9 @@ const stateCommand = command({
     json: jsonFlag,
   },
   handler: async (args) => {
-    const client = new DaemonClient(args.session);
-    if (!(await client.ping())) {
-      console.error(
-        "Daemon not running. Use 'agent-browser open <url>' first.",
-      );
-      process.exit(1);
-    }
+    const client = await ensureDaemon(args.session ?? "default", undefined, {
+      createIfMissing: false,
+    });
 
     const response = await client.state({
       format: args.json ? "json" : "text",
@@ -656,13 +651,9 @@ const screenshotCommand = command({
     }),
   },
   handler: async (args) => {
-    const client = new DaemonClient(args.session);
-    if (!(await client.ping())) {
-      console.error(
-        "Daemon not running. Use 'agent-browser open <url>' first.",
-      );
-      process.exit(1);
-    }
+    const client = await ensureDaemon(args.session ?? "default", undefined, {
+      createIfMissing: false,
+    });
 
     const response = await client.screenshot({
       fullPage: args.fullPage,
@@ -702,13 +693,9 @@ const resizeCommand = command({
     json: jsonFlag,
   },
   handler: async (args) => {
-    const client = new DaemonClient(args.session);
-    if (!(await client.ping())) {
-      console.error(
-        "Daemon not running. Use 'agent-browser open <url>' first.",
-      );
-      process.exit(1);
-    }
+    const client = await ensureDaemon(args.session ?? "default", undefined, {
+      createIfMissing: false,
+    });
 
     const response = await client.command({
       type: "resize",
@@ -1143,14 +1130,9 @@ const profileSaveCommand = command({
     }),
   },
   handler: async (args) => {
-    const client = new DaemonClient(args.session);
-
-    if (!(await client.ping())) {
-      console.error(
-        "Daemon not running. Use 'agent-browser open <url>' first to start a session.",
-      );
-      process.exit(1);
-    }
+    const client = await ensureDaemon(args.session ?? "default", undefined, {
+      createIfMissing: false,
+    });
 
     // Get storage state from session via command
     const response = await client.command({
@@ -1352,6 +1334,7 @@ const profileCommand = subcommands({
 
 const cli = subcommands({
   name: "agent-browser",
+  version: VERSION,
   cmds: {
     // Primary CLI commands (daemon-based)
     open: openCommand,
@@ -1378,10 +1361,11 @@ const cli = subcommands({
 });
 
 run(cli, process.argv.slice(2)).catch((error) => {
-  log
-    .withError(error)
-    .withMetadata({ argv: process.argv.slice(2) })
-    .error("CLI failed");
-  console.error(error);
+  // Print clean error message for user-facing errors
+  if (error instanceof Error) {
+    console.error(`Error: ${error.message}`);
+  } else {
+    console.error(error);
+  }
   process.exit(1);
 });

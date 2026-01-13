@@ -30,11 +30,15 @@ export {
   DaemonClient,
   type DaemonOptions,
   ensureDaemon,
+  getDaemonVersion,
   getPidPath,
   getSocketPath,
+  getVersionPath,
   isDaemonRunning,
   startDaemon,
 } from "./daemon";
+// Version
+export { VERSION } from "./version";
 // Profiles
 export {
   deleteProfile,
