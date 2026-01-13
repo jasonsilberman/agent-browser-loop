@@ -35,6 +35,21 @@ export {
   isDaemonRunning,
   startDaemon,
 } from "./daemon";
+// Profiles
+export {
+  deleteProfile,
+  importProfile,
+  listProfiles,
+  loadProfile,
+  loadStorageState,
+  type Profile,
+  type ProfileInfo,
+  type ProfileMeta,
+  resolveProfilePath,
+  resolveStorageStateOption,
+  saveProfile,
+  touchProfile,
+} from "./profiles";
 export type { ElementSelectors, StoredElementRef } from "./ref-store";
 // Ref store for server-side element reference management
 export { ElementRefStore } from "./ref-store";

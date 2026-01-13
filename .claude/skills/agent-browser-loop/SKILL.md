@@ -3,11 +3,14 @@ name: agent-browser-loop
 description: Use when an agent must drive a live browser session in a back-and-forth loop (state -> explicit actions -> state) for UI validation, reproducible QA, or debugging UI behavior. Prefer this over one-shot CLI usage when an agent needs inspectable, stepwise control.
 ---
 
+
 # Agent Browser Loop
 
 Control a browser via CLI. Execute actions, read state, and verify UI changes in a stepwise loop.
 
 ## Quick Start
+
+> **TIP**: Check package.json for dev server scripts to find the port to test
 
 ```bash
 # Open a URL (starts browser daemon automatically)
@@ -165,12 +168,41 @@ agent-browser close
 # Headed mode (visible browser)
 agent-browser open http://localhost:3000 --headed
 
-# JSON output
-agent-browser state --json
+# Custom viewport size
+agent-browser open http://localhost:3000 --width 1920 --height 1080
 
-# Skip state in response
-agent-browser act click:button_0 --no-state
+# Resize mid-session
+agent-browser resize 1920 1080
 ```
+
+## Profiles (Session Storage)
+
+Save and reuse cookies/localStorage across sessions. The profile name (e.g., `admin`, `testuser`) is an arbitrary identifier you choose.
+
+```bash
+# Capture: opens browser, you interact, press Enter in terminal to save
+agent-browser profile capture admin --url http://localhost:3000/login
+
+# Or save from an already-open session
+agent-browser open http://localhost:3000/login --headed
+# ... log in manually ...
+agent-browser profile save admin
+
+# Use saved profile - auto-saves updated tokens on close
+agent-browser open http://localhost:3000/dashboard --profile admin
+# ... use the app (tokens may refresh) ...
+agent-browser close  # Updated tokens saved back to profile
+
+# Use --no-save for read-only (don't save changes back)
+agent-browser open http://localhost:3000 --profile admin --no-save
+
+# List/manage profiles
+agent-browser profile list
+agent-browser profile show admin
+agent-browser profile delete admin
+```
+
+Profiles are stored locally (`.agent-browser/profiles/`) or globally (`~/.config/agent-browser/profiles/`).
 
 ## Multi-Session
 

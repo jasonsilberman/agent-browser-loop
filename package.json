@@ -1,6 +1,6 @@
 {
   "name": "agent-browser-loop",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Let your AI coding agent drive a browser to verify its own work",
   "license": "MIT",
   "author": "Jason Silberman",

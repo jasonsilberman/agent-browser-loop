@@ -483,6 +483,28 @@ export class AgentBrowser {
   }
 
   /**
+   * Resize the viewport
+   */
+  async resize(width: number, height: number): Promise<void> {
+    await this.getPage().setViewportSize({ width, height });
+    this.config.viewportWidth = width;
+    this.config.viewportHeight = height;
+  }
+
+  /**
+   * Get current viewport size
+   */
+  getViewportSize(): { width: number; height: number } {
+    const size = this.getPage().viewportSize();
+    return (
+      size ?? {
+        width: this.config.viewportWidth!,
+        height: this.config.viewportHeight!,
+      }
+    );
+  }
+
+  /**
    * Get captured console logs
    */
   getConsoleLogs(): string[] {

@@ -1,5 +1,7 @@
 # Agent Browser Loop - CLI Reference
 
+<!-- TIP: Check package.json for dev server scripts to find the port to test (e.g. dev:basic, dev:next) -->
+
 Complete CLI reference for `agent-browser`.
 
 ## Commands
@@ -18,12 +20,19 @@ agent-browser open <url> [options]
 | `--headed` | Show browser window (default: headless) |
 | `--new, -n` | Create new session with auto-generated ID |
 | `--session, -s <id>` | Target session (from `--new`) |
+| `--profile, -p <name>` | Load profile and save back on close |
+| `--no-save` | Don't save profile changes on close (read-only) |
+| `--width, -W <pixels>` | Viewport width (default: 1280) |
+| `--height, -H <pixels>` | Viewport height (default: 720) |
 | `--json` | Output as JSON |
 
 **Examples:**
 ```bash
 agent-browser open http://localhost:3000
 agent-browser open http://localhost:3000 --headed
+agent-browser open http://localhost:3000 --width 1920 --height 1080
+agent-browser open http://localhost:3000 --profile admin  # Loads and auto-saves on close
+agent-browser open http://localhost:3000 --profile admin --no-save  # Read-only
 agent-browser open --new http://localhost:3000  # Output: Session: swift-fox
 ```
 
@@ -54,6 +63,7 @@ agent-browser act <actions...> [options]
 | Type | `type:<ref>:<text>` | `type:input_0:hello` |
 | Press key | `press:<key>` | `press:Enter` |
 | Scroll | `scroll:<direction>[:<amount>]` | `scroll:down:500` |
+| Resize | `resize:<width>:<height>` | `resize:1920:1080` |
 | Select | `select:<ref>:<value>` | `select:select_0:option1` |
 | Check | `check:<ref>` | `check:checkbox_0` |
 | Uncheck | `uncheck:<ref>` | `uncheck:checkbox_0` |
@@ -210,6 +220,127 @@ agent-browser screenshot --full-page -o full.png
 # Output base64 (for piping or programmatic use)
 agent-browser screenshot
 ```
+
+---
+
+### `resize <width> <height>`
+
+Resize the browser viewport mid-session.
+
+```bash
+agent-browser resize <width> <height> [options]
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--session, -s <id>` | Target session |
+| `--json` | Output as JSON |
+
+**Examples:**
+```bash
+agent-browser resize 1920 1080
+agent-browser resize 375 667  # Mobile viewport
+agent-browser act "resize:1920:1080"  # Via act command
+```
+
+---
+
+### `profile <subcommand>`
+
+Manage session storage profiles (cookies + localStorage). The `<name>` in all commands is an arbitrary identifier you choose (e.g., `admin`, `testuser`, `staging`).
+
+#### `profile list`
+
+List all available profiles.
+
+```bash
+agent-browser profile list [--json]
+```
+
+#### `profile show <name>`
+
+Show profile contents.
+
+```bash
+agent-browser profile show <name> [--json]
+```
+
+#### `profile save <name>`
+
+Save current session storage to a profile.
+
+```bash
+agent-browser profile save <name> [options]
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--session, -s <id>` | Source session |
+| `--global` | Save to global profiles (`~/.config/agent-browser/profiles/`) |
+| `--private` | Save to private profiles (gitignored) |
+| `--description, -d <text>` | Profile description |
+
+#### `profile delete <name>`
+
+Delete a profile.
+
+```bash
+agent-browser profile delete <name>
+```
+
+#### `profile import <name> <path>`
+
+Import profile from a Playwright storage state JSON file.
+
+```bash
+agent-browser profile import <name> <path> [--global] [--private]
+```
+
+#### `profile capture <name>`
+
+Opens a headed browser, lets you interact manually (log in, etc.), then saves the session when you press Enter in the terminal.
+
+```bash
+agent-browser profile capture <name> --url <url> [options]
+```
+
+**Options:**
+| Flag | Description |
+|------|-------------|
+| `--url <url>` | URL to navigate to (required) |
+| `--global` | Save to global profiles |
+| `--private` | Save to private profiles |
+| `--description, -d <text>` | Profile description |
+
+**Examples:**
+```bash
+# Capture a session (opens browser, you log in, press Enter to save)
+agent-browser profile capture admin --url http://localhost:3000/login
+agent-browser profile capture testuser --url http://localhost:3000/login
+
+# Save from an already-open session instead
+agent-browser open http://localhost:3000/login --headed
+# ... log in manually ...
+agent-browser profile save admin --description "Admin account"
+
+# Use profile (loads saved cookies/localStorage)
+agent-browser open http://localhost:3000/dashboard --profile admin
+
+# List profiles
+agent-browser profile list
+
+# Import existing Playwright storage state file
+agent-browser profile import staging ./storage-state.json --global
+```
+
+**Profile Storage Locations:**
+- Local: `.agent-browser/profiles/<name>.json` (project-scoped, shareable via git)
+- Private: `.agent-browser/profiles/.private/<name>.json` (gitignored)
+- Global: `~/.config/agent-browser/profiles/<name>.json` (user-level)
+
+Resolution order: private -> local -> global
 
 ---
 

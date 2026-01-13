@@ -24,8 +24,17 @@ import {
   isDaemonRunning,
 } from "./daemon";
 import { log, withLog } from "./log";
+import {
+  deleteProfile,
+  importProfile,
+  listProfiles,
+  loadProfile,
+  resolveProfilePath,
+  resolveStorageStateOption,
+  saveProfile,
+} from "./profiles";
 import { startBrowserServer } from "./server";
-import type { BrowserCliConfig } from "./types";
+import type { BrowserCliConfig, StorageState } from "./types";
 
 // ============================================================================
 // Config Loading
@@ -119,16 +128,62 @@ const jsonFlag = flag({
   description: "Output as JSON instead of text",
 });
 
+const profileOption = option({
+  long: "profile",
+  short: "p",
+  type: optional(string),
+  description:
+    "Load profile and save back on close (use --no-save for read-only)",
+});
+
+const noSaveFlag = flag({
+  long: "no-save",
+  description: "Don't save profile changes on close (read-only)",
+});
+
+const globalFlag = flag({
+  long: "global",
+  description: "Save to user-level global profiles (~/.config/agent-browser/)",
+});
+
+const privateFlag = flag({
+  long: "private",
+  description: "Save to project .private/ (gitignored, for secrets)",
+});
+
+const widthOption = option({
+  long: "width",
+  short: "W",
+  type: optional(number),
+  description: "Viewport width in pixels (default: 1280)",
+});
+
+const heightOption = option({
+  long: "height",
+  short: "H",
+  type: optional(number),
+  description: "Viewport height in pixels (default: 720)",
+});
+
 // ============================================================================
 // Browser Options Resolution
 // ============================================================================
+
+type SessionBrowserOptions = AgentBrowserOptions & {
+  profile?: string;
+  noSave?: boolean;
+};
 
 async function resolveBrowserOptions(args: {
   configPath?: string;
   headless?: boolean;
   headed?: boolean;
   bundled?: boolean;
-}): Promise<AgentBrowserOptions> {
+  profile?: string;
+  noSave?: boolean;
+  width?: number;
+  height?: number;
+}): Promise<SessionBrowserOptions> {
   const configPath = await findConfigPath(args.configPath);
   const config = configPath ? await loadConfig(configPath) : undefined;
 
@@ -143,18 +198,30 @@ async function resolveBrowserOptions(args: {
 
   const useSystemChrome = args.bundled ? false : config?.useSystemChrome;
 
+  // Resolve storage state from profile or config
+  const storageState = resolveStorageStateOption(
+    args.profile,
+    config?.storageStatePath,
+  );
+
   return {
     headless,
     executablePath: config?.executablePath,
     useSystemChrome,
     allowSystemChromeHeadless: config?.allowSystemChromeHeadless,
-    viewportWidth: config?.viewportWidth,
-    viewportHeight: config?.viewportHeight,
+    viewportWidth: args.width ?? config?.viewportWidth,
+    viewportHeight: args.height ?? config?.viewportHeight,
     userDataDir: config?.userDataDir,
     timeout: config?.timeout,
     captureNetwork: config?.captureNetwork,
     networkLogLimit: config?.networkLogLimit,
-    storageStatePath: config?.storageStatePath,
+    // Use resolved storage state (object or path)
+    storageState: typeof storageState === "object" ? storageState : undefined,
+    storageStatePath:
+      typeof storageState === "string" ? storageState : undefined,
+    // Track profile for save-on-close
+    profile: args.profile,
+    noSave: args.noSave,
   };
 }
 
@@ -171,6 +238,7 @@ async function resolveBrowserOptions(args: {
  *   press:Enter
  *   scroll:down
  *   scroll:down:500
+ *   resize:1920:1080
  */
 function parseAction(actionStr: string): StepAction {
   const parts = actionStr.split(":");
@@ -205,6 +273,15 @@ function parseAction(actionStr: string): StepAction {
       const ref = parts[1];
       const value = parts.slice(2).join(":");
       return { type: "select", ref, value };
+    }
+
+    case "resize": {
+      const width = Number.parseInt(parts[1], 10);
+      const height = Number.parseInt(parts[2], 10);
+      if (Number.isNaN(width) || Number.isNaN(height)) {
+        throw new Error("resize requires width:height (e.g. resize:1920:1080)");
+      }
+      return { type: "resize", width, height };
     }
 
     default:
@@ -320,6 +397,10 @@ const openCommand = command({
     headed: headedFlag,
     config: configOption,
     json: jsonFlag,
+    profile: profileOption,
+    noSave: noSaveFlag,
+    width: widthOption,
+    height: heightOption,
   },
   handler: async (args) => {
     const browserOptions = await resolveBrowserOptions({
@@ -351,12 +432,15 @@ const openCommand = command({
     if (args.json) {
       const jsonData =
         typeof response.data === "object" && response.data !== null
-          ? { ...(response.data as object), sessionId }
-          : { data: response.data, sessionId };
+          ? { ...(response.data as object), sessionId, profile: args.profile }
+          : { data: response.data, sessionId, profile: args.profile };
       console.log(JSON.stringify(jsonData, null, 2));
     } else {
       if (args.new && sessionId) {
         console.log(`Session: ${sessionId}`);
+      }
+      if (args.profile) {
+        console.log(`Profile: ${args.profile}`);
       }
       console.log(data.text ?? "Navigated successfully");
     }
@@ -380,6 +464,7 @@ const actCommand = command({
       long: "no-state",
       description: "Don't return state after actions",
     }),
+    profile: profileOption,
   },
   handler: async (args) => {
     if (args.actions.length === 0) {
@@ -602,6 +687,44 @@ const screenshotCommand = command({
     } else {
       // Output base64
       console.log(base64);
+    }
+  },
+});
+
+// --- resize ---
+const resizeCommand = command({
+  name: "resize",
+  description: "Resize browser viewport",
+  args: {
+    width: positional({ type: number, displayName: "width" }),
+    height: positional({ type: number, displayName: "height" }),
+    session: sessionOption,
+    json: jsonFlag,
+  },
+  handler: async (args) => {
+    const client = new DaemonClient(args.session);
+    if (!(await client.ping())) {
+      console.error(
+        "Daemon not running. Use 'agent-browser open <url>' first.",
+      );
+      process.exit(1);
+    }
+
+    const response = await client.command({
+      type: "resize",
+      width: args.width,
+      height: args.height,
+    });
+
+    if (!response.success) {
+      console.error("Error:", response.error);
+      process.exit(1);
+    }
+
+    if (args.json) {
+      console.log(JSON.stringify({ width: args.width, height: args.height }));
+    } else {
+      console.log(`Viewport resized to ${args.width}x${args.height}`);
     }
   },
 });
@@ -907,6 +1030,323 @@ const installSkillCommand = command({
 });
 
 // ============================================================================
+// Profile Commands
+// ============================================================================
+
+const profileListCommand = command({
+  name: "list",
+  description: "List all available profiles",
+  args: {
+    json: jsonFlag,
+  },
+  handler: async (args) => {
+    const profiles = listProfiles();
+
+    if (args.json) {
+      console.log(JSON.stringify(profiles, null, 2));
+    } else {
+      if (profiles.length === 0) {
+        console.log("No profiles found.");
+        console.log("\nCreate a profile with:");
+        console.log("  agent-browser profile login <name> --url <login-url>");
+        console.log("  agent-browser profile save <name>");
+        return;
+      }
+
+      console.log(`Profiles (${profiles.length}):\n`);
+      for (const p of profiles) {
+        const scopeLabel =
+          p.scope === "global"
+            ? "[global]"
+            : p.scope === "local-private"
+              ? "[private]"
+              : "[local]";
+        console.log(`  ${p.name} ${scopeLabel}`);
+        if (p.meta?.description) {
+          console.log(`    ${p.meta.description}`);
+        }
+        if (p.meta?.origins?.length) {
+          console.log(`    Origins: ${p.meta.origins.join(", ")}`);
+        }
+        if (p.meta?.lastUsedAt) {
+          console.log(`    Last used: ${p.meta.lastUsedAt}`);
+        }
+        console.log();
+      }
+    }
+  },
+});
+
+const profileShowCommand = command({
+  name: "show",
+  description: "Show profile contents",
+  args: {
+    name: positional({ type: string, displayName: "name" }),
+    json: jsonFlag,
+  },
+  handler: async (args) => {
+    const profile = loadProfile(args.name);
+    if (!profile) {
+      console.error(`Profile not found: ${args.name}`);
+      process.exit(1);
+    }
+
+    if (args.json) {
+      console.log(JSON.stringify(profile, null, 2));
+    } else {
+      const resolved = resolveProfilePath(args.name);
+      console.log(`Profile: ${args.name}`);
+      console.log(`Path: ${resolved?.path}`);
+      console.log(`Scope: ${resolved?.scope}`);
+      console.log();
+      if (profile._meta?.description) {
+        console.log(`Description: ${profile._meta.description}`);
+      }
+      if (profile._meta?.origins?.length) {
+        console.log(`Origins: ${profile._meta.origins.join(", ")}`);
+      }
+      if (profile._meta?.createdAt) {
+        console.log(`Created: ${profile._meta.createdAt}`);
+      }
+      if (profile._meta?.lastUsedAt) {
+        console.log(`Last used: ${profile._meta.lastUsedAt}`);
+      }
+      console.log();
+      console.log(`Cookies: ${profile.cookies.length}`);
+      for (const cookie of profile.cookies) {
+        console.log(`  - ${cookie.name} (${cookie.domain})`);
+      }
+      console.log();
+      console.log(`LocalStorage origins: ${profile.origins.length}`);
+      for (const origin of profile.origins) {
+        console.log(
+          `  - ${origin.origin}: ${origin.localStorage.length} items`,
+        );
+      }
+    }
+  },
+});
+
+const profileSaveCommand = command({
+  name: "save",
+  description: "Save current session storage to a profile",
+  args: {
+    name: positional({ type: string, displayName: "name" }),
+    session: sessionOption,
+    global: globalFlag,
+    private: privateFlag,
+    description: option({
+      long: "description",
+      short: "d",
+      type: optional(string),
+      description: "Profile description",
+    }),
+  },
+  handler: async (args) => {
+    const client = new DaemonClient(args.session);
+
+    if (!(await client.ping())) {
+      console.error(
+        "Daemon not running. Use 'agent-browser open <url>' first to start a session.",
+      );
+      process.exit(1);
+    }
+
+    // Get storage state from session via command
+    const response = await client.command({
+      type: "saveStorageState",
+    });
+
+    if (!response.success) {
+      console.error("Error:", response.error);
+      process.exit(1);
+    }
+
+    const storageState = response.data as StorageState;
+
+    // Extract origins from storage state
+    const origins = [
+      ...new Set([
+        ...storageState.cookies.map((c) => c.domain),
+        ...storageState.origins.map((o) => o.origin),
+      ]),
+    ].filter(Boolean);
+
+    const savedPath = saveProfile(args.name, storageState, {
+      global: args.global,
+      private: args.private,
+      description: args.description,
+      origins,
+    });
+
+    console.log(`Profile saved: ${args.name}`);
+    console.log(`Path: ${savedPath}`);
+    console.log(`Cookies: ${storageState.cookies.length}`);
+    console.log(`LocalStorage origins: ${storageState.origins.length}`);
+  },
+});
+
+const profileDeleteCommand = command({
+  name: "delete",
+  description: "Delete a profile",
+  args: {
+    name: positional({ type: string, displayName: "name" }),
+  },
+  handler: async (args) => {
+    const resolved = resolveProfilePath(args.name);
+    if (!resolved) {
+      console.error(`Profile not found: ${args.name}`);
+      process.exit(1);
+    }
+
+    const deleted = deleteProfile(args.name);
+    if (deleted) {
+      console.log(`Deleted profile: ${args.name}`);
+      console.log(`Path: ${resolved.path}`);
+    } else {
+      console.error(`Failed to delete profile: ${args.name}`);
+      process.exit(1);
+    }
+  },
+});
+
+const profileImportCommand = command({
+  name: "import",
+  description: "Import a profile from a storage state JSON file",
+  args: {
+    name: positional({ type: string, displayName: "name" }),
+    path: positional({ type: string, displayName: "path" }),
+    global: globalFlag,
+    private: privateFlag,
+  },
+  handler: async (args) => {
+    try {
+      const savedPath = importProfile(args.name, args.path, {
+        global: args.global,
+        private: args.private,
+      });
+      console.log(`Imported profile: ${args.name}`);
+      console.log(`Path: ${savedPath}`);
+    } catch (err) {
+      console.error("Error:", err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  },
+});
+
+const profileCaptureCommand = command({
+  name: "capture",
+  description: "Open browser, interact manually, then save session to profile",
+  args: {
+    name: positional({ type: string, displayName: "name" }),
+    url: option({
+      long: "url",
+      type: string,
+      description: "URL to navigate to",
+    }),
+    headed: headedFlag,
+    headless: headlessFlag,
+    config: configOption,
+    global: globalFlag,
+    private: privateFlag,
+    description: option({
+      long: "description",
+      short: "d",
+      type: optional(string),
+      description: "Profile description",
+    }),
+  },
+  handler: async (args) => {
+    console.log(`Capturing session for profile: ${args.name}`);
+    console.log(`URL: ${args.url}`);
+    console.log();
+    console.log("Browser will open. Log in or do whatever you need.");
+    console.log("Press Enter here when done to save and close.");
+    console.log();
+
+    // Force headed mode for interactive login
+    const browserOptions = await resolveBrowserOptions({
+      ...args,
+      configPath: args.config,
+      headed: true,
+      headless: false,
+    });
+
+    // Create a new session for login
+    const client = await ensureDaemonNewSession(browserOptions);
+    const sessionId = client.getSessionId();
+
+    // Navigate to login URL
+    const navResponse = await client.act([{ type: "navigate", url: args.url }]);
+    if (!navResponse.success) {
+      console.error("Error navigating:", navResponse.error);
+      await client.closeSession(sessionId!);
+      process.exit(1);
+    }
+
+    // Wait for user to press Enter
+    process.stdout.write("Press Enter when login is complete...");
+    await new Promise<void>((resolve) => {
+      process.stdin.setRawMode?.(false);
+      process.stdin.resume();
+      process.stdin.once("data", () => {
+        resolve();
+      });
+    });
+    console.log();
+
+    // Save storage state
+    const saveResponse = await client.command({
+      type: "saveStorageState",
+    });
+
+    if (!saveResponse.success) {
+      console.error("Error saving storage state:", saveResponse.error);
+      await client.closeSession(sessionId!);
+      process.exit(1);
+    }
+
+    const storageState = saveResponse.data as StorageState;
+
+    // Extract origins from storage state
+    const origins = [
+      ...new Set([
+        ...storageState.cookies.map((c) => c.domain),
+        ...storageState.origins.map((o) => o.origin),
+      ]),
+    ].filter(Boolean);
+
+    const savedPath = saveProfile(args.name, storageState, {
+      global: args.global,
+      private: args.private,
+      description: args.description,
+      origins,
+    });
+
+    // Close the session
+    await client.closeSession(sessionId!);
+
+    console.log();
+    console.log(`Profile saved: ${args.name}`);
+    console.log(`Path: ${savedPath}`);
+    console.log(`Cookies: ${storageState.cookies.length}`);
+    console.log(`LocalStorage origins: ${storageState.origins.length}`);
+  },
+});
+
+const profileCommand = subcommands({
+  name: "profile",
+  cmds: {
+    list: profileListCommand,
+    show: profileShowCommand,
+    save: profileSaveCommand,
+    delete: profileDeleteCommand,
+    import: profileImportCommand,
+    capture: profileCaptureCommand,
+  },
+});
+
+// ============================================================================
 // Main CLI
 // ============================================================================
 
@@ -919,9 +1359,13 @@ const cli = subcommands({
     wait: waitCommand,
     state: stateCommand,
     screenshot: screenshotCommand,
+    resize: resizeCommand,
     close: closeCommand,
     sessions: sessionsCommand,
     status: statusCommand,
+
+    // Profile management
+    profile: profileCommand,
 
     // Setup & configuration
     setup: setupCommand,

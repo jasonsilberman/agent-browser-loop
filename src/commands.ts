@@ -121,6 +121,12 @@ const screenshotCommandSchema = z.object({
   path: z.string().optional(),
 });
 
+const resizeCommandSchema = z.object({
+  type: z.literal("resize"),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
 const saveStorageStateCommandSchema = z.object({
   type: z.literal("saveStorageState"),
   path: z.string().optional(),
@@ -178,6 +184,7 @@ export const stepActionSchema = z.discriminatedUnion("type", [
   waitForElementCommandSchema,
   screenshotCommandSchema,
   saveStorageStateCommandSchema,
+  resizeCommandSchema,
 ]);
 
 // All commands
@@ -202,6 +209,7 @@ export const commandSchema = z.discriminatedUnion("type", [
   clearNetworkLogsCommandSchema,
   enableNetworkCaptureCommandSchema,
   saveStorageStateCommandSchema,
+  resizeCommandSchema,
   closeCommandSchema,
 ]);
 
@@ -279,6 +287,9 @@ export async function executeCommand(
       return;
     case "close":
       await browser.stop();
+      return;
+    case "resize":
+      await browser.resize(command.width, command.height);
       return;
     // Commands that return data
     case "getState":

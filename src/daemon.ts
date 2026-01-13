@@ -19,7 +19,9 @@ import {
   waitConditionSchema,
 } from "./commands";
 import { createIdGenerator } from "./id";
+import { saveProfile } from "./profiles";
 import { formatStateText } from "./state";
+import type { StorageState } from "./types";
 
 // ============================================================================
 // Daemon Protocol
@@ -37,6 +39,10 @@ const browserOptionsSchema = z
     captureNetwork: z.boolean().optional(),
     networkLogLimit: z.number().optional(),
     storageStatePath: z.string().optional(),
+    // Profile to load and save back on close
+    profile: z.string().optional(),
+    // If true, don't save profile on close (read-only)
+    noSave: z.boolean().optional(),
   })
   .optional();
 
@@ -120,6 +126,10 @@ type DaemonSession = {
   lastUsed: number;
   busy: boolean;
   options: AgentBrowserOptions;
+  // Profile name to save back on close (if set)
+  profile?: string;
+  // If true, don't save profile on close
+  noSave?: boolean;
 };
 
 // ============================================================================
@@ -219,13 +229,17 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
   // Session helpers
   async function createSession(
     sessionId?: string,
-    browserOptions?: AgentBrowserOptions,
+    browserOptions?: AgentBrowserOptions & {
+      profile?: string;
+      noSave?: boolean;
+    },
   ): Promise<DaemonSession> {
     const id = sessionId ?? idGenerator.next();
     if (sessions.has(id)) {
       throw new Error(`Session already exists: ${id}`);
     }
-    const mergedOptions = { ...defaultOptions, ...browserOptions };
+    const { profile, noSave, ...restOptions } = browserOptions ?? {};
+    const mergedOptions = { ...defaultOptions, ...restOptions };
     const browser = createBrowser(mergedOptions);
     await browser.start();
     const session: DaemonSession = {
@@ -234,6 +248,8 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
       lastUsed: Date.now(),
       busy: false,
       options: mergedOptions,
+      profile,
+      noSave,
     };
     sessions.set(id, session);
     return session;
@@ -250,14 +266,34 @@ export async function startDaemon(options: DaemonOptions = {}): Promise<void> {
     return session;
   }
 
-  async function closeSession(sessionId: string): Promise<void> {
+  async function closeSession(
+    sessionId: string,
+  ): Promise<{ profileSaved?: string }> {
     const session = sessions.get(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
+
+    let profileSaved: string | undefined;
+
+    // Save profile if one was loaded and noSave is not set
+    if (session.profile && !session.noSave) {
+      try {
+        const storageState =
+          (await session.browser.saveStorageState()) as StorageState;
+        saveProfile(session.profile, storageState);
+        profileSaved = session.profile;
+      } catch (err) {
+        // Log but don't fail the close
+        console.error(`Failed to save profile ${session.profile}:`, err);
+      }
+    }
+
     await session.browser.stop();
     sessions.delete(sessionId);
     idGenerator.release(sessionId);
+
+    return { profileSaved };
   }
 
   const shutdown = async () => {
@@ -398,10 +434,10 @@ async function handleRequest(
   sessions: Map<string, DaemonSession>,
   createSession: (
     sessionId?: string,
-    options?: AgentBrowserOptions,
+    options?: AgentBrowserOptions & { profile?: string; noSave?: boolean },
   ) => Promise<DaemonSession>,
   getOrDefaultSession: (sessionId?: string) => DaemonSession,
-  closeSession: (sessionId: string) => Promise<void>,
+  closeSession: (sessionId: string) => Promise<{ profileSaved?: string }>,
 ): Promise<DaemonResponse> {
   const { id } = request;
 
@@ -439,8 +475,12 @@ async function handleRequest(
       }
 
       case "close": {
-        await closeSession(request.sessionId);
-        return { id, success: true, data: { closed: request.sessionId } };
+        const { profileSaved } = await closeSession(request.sessionId);
+        return {
+          id,
+          success: true,
+          data: { closed: request.sessionId, profileSaved },
+        };
       }
 
       case "command": {
@@ -451,7 +491,12 @@ async function handleRequest(
           const result = await executeCommand(session.browser, request.command);
           // Handle close command - close the session
           if (request.command.type === "close") {
-            await closeSession(session.id);
+            const { profileSaved } = await closeSession(session.id);
+            return {
+              id,
+              success: true,
+              data: { ...((result as object) ?? {}), profileSaved },
+            };
           }
           return { id, success: true, data: result };
         } finally {

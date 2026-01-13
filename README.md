@@ -57,6 +57,45 @@ agent-browser state
 
 Every command returns the current page state - interactive elements, form values, scroll position, console errors, network failures. The agent sees exactly what it needs to verify the code works or debug why it doesn't.
 
+## Profiles (Session Storage)
+
+Save and reuse login sessions across runs:
+
+```bash
+# Save current session to a profile
+agent-browser profile save admin
+
+# Use profile (auto-saves updated tokens on close)
+agent-browser open http://localhost:3000 --profile admin
+
+# Use --no-save for read-only access
+agent-browser open http://localhost:3000 --profile admin --no-save
+
+# Other commands
+agent-browser profile list
+agent-browser profile capture admin --url http://localhost:3000/login
+agent-browser profile delete admin
+```
+
+Profiles store cookies and localStorage. Use `--global` for user-level profiles, `--private` for gitignored project profiles.
+
+## Multi-Session
+
+Run multiple browser sessions in parallel:
+
+```bash
+# Create sessions with auto-generated IDs
+agent-browser open --new http://localhost:3000     # Output: Session: swift-fox
+agent-browser open --new http://localhost:3000     # Output: Session: calm-river
+
+# Target specific sessions
+agent-browser act -s swift-fox click:button_0
+agent-browser state -s calm-river
+
+# List all sessions
+agent-browser sessions
+```
+
 ## CLI Reference
 
 | Command | Description |
@@ -100,23 +139,6 @@ agent-browser wait --timeout 60000         # Custom timeout
 --session <id>        # Target specific session (from --new)
 --json                # JSON output
 --no-state            # Skip state in response
-```
-
-## Multi-Session
-
-Run multiple browser sessions in parallel:
-
-```bash
-# Create sessions with auto-generated IDs
-agent-browser open --new http://localhost:3000     # Output: Session: swift-fox
-agent-browser open --new http://localhost:3000     # Output: Session: calm-river
-
-# Target specific sessions
-agent-browser act -s swift-fox click:button_0
-agent-browser state -s calm-river
-
-# List all sessions
-agent-browser sessions
 ```
 
 ## State Output

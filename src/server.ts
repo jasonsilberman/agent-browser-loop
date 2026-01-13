@@ -19,7 +19,16 @@ import {
 } from "./commands";
 import { createIdGenerator } from "./id";
 import { log } from "./log";
+import {
+  deleteProfile,
+  listProfiles,
+  loadProfile,
+  resolveProfilePath,
+  resolveStorageStateOption,
+  saveProfile,
+} from "./profiles";
 import { formatStateText } from "./state";
+import type { StorageState } from "./types";
 
 export interface BrowserServerConfig {
   host?: string;
@@ -232,6 +241,7 @@ function getWaitCondition(data: WaitRequest): WaitCondition {
 const createSessionBodySchema = z.object({
   headless: z.boolean().optional(),
   userDataDir: z.string().optional(),
+  profile: z.string().optional(),
 });
 
 const sessionParamsSchema = z.object({
@@ -528,15 +538,42 @@ const waitRoute = createRoute({
   },
 });
 
+const closeSessionBodySchema = z
+  .object({
+    saveProfile: z.string().optional(),
+    global: z.boolean().optional(),
+    private: z.boolean().optional(),
+  })
+  .optional();
+
 const closeRoute = createRoute({
   method: "post",
   path: "/session/{sessionId}/close",
   request: {
     params: sessionParamsSchema,
+    body: {
+      required: false,
+      content: {
+        "application/json": {
+          schema: closeSessionBodySchema,
+        },
+      },
+    },
   },
   responses: {
     204: {
       description: "Session closed",
+    },
+    200: {
+      description: "Session closed with profile saved",
+      content: {
+        "application/json": {
+          schema: z.object({
+            profileSaved: z.string().optional(),
+            profilePath: z.string().optional(),
+          }),
+        },
+      },
     },
     404: {
       description: "Session not found",
@@ -745,6 +782,14 @@ export function startBrowserServer(config: BrowserServerConfig) {
         overrides.userDataDir = body.userDataDir;
       }
 
+      // Handle profile option
+      if (body?.profile) {
+        const storageState = resolveStorageStateOption(body.profile);
+        if (typeof storageState === "object") {
+          overrides.storageState = storageState;
+        }
+      }
+
       const id = await createNewSession(overrides);
       return c.json({ sessionId: id }, 200);
     },
@@ -886,11 +931,29 @@ export function startBrowserServer(config: BrowserServerConfig) {
   app.openapi(closeRoute, async (c) => {
     const { sessionId } = c.req.valid("param");
     const session = getSessionOrThrow(sessions, sessionId);
+    const body = c.req.valid("json");
 
     return withSession(session, async () => {
+      let profilePath: string | undefined;
+
+      // Save profile before closing if requested
+      if (body?.saveProfile) {
+        const storageState =
+          (await session.browser.saveStorageState()) as StorageState;
+        profilePath = saveProfile(body.saveProfile, storageState, {
+          global: body.global,
+          private: body.private,
+        });
+      }
+
       await session.browser.stop();
       sessions.delete(sessionId);
       idGenerator.release(sessionId);
+
+      if (profilePath) {
+        return c.json({ profileSaved: body?.saveProfile, profilePath }, 200);
+      }
+
       return c.body(null, 204);
     });
   });
@@ -903,6 +966,91 @@ export function startBrowserServer(config: BrowserServerConfig) {
       const currentState = await session.browser.getState();
       return c.text(formatStateText(currentState), 200);
     });
+  });
+
+  // ========================================================================
+  // Profile Endpoints
+  // ========================================================================
+
+  // GET /profiles - list all profiles
+  app.get("/profiles", (c) => {
+    const profiles = listProfiles();
+    return c.json(profiles);
+  });
+
+  // GET /profiles/:name - get profile contents
+  app.get("/profiles/:name", (c) => {
+    const name = c.req.param("name");
+    const profile = loadProfile(name);
+    if (!profile) {
+      return c.json({ error: `Profile not found: ${name}` }, 404);
+    }
+    const resolved = resolveProfilePath(name);
+    return c.json({
+      name,
+      scope: resolved?.scope,
+      path: resolved?.path,
+      profile,
+    });
+  });
+
+  // POST /profiles/:name - save profile from session or body
+  app.post("/profiles/:name", async (c) => {
+    const name = c.req.param("name");
+    const body = await c.req.json().catch(() => ({}));
+
+    let storageState: StorageState;
+
+    // If sessionId provided, get storage state from that session
+    if (body.sessionId) {
+      const session = sessions.get(body.sessionId);
+      if (!session) {
+        return c.json({ error: `Session not found: ${body.sessionId}` }, 404);
+      }
+      storageState = (await session.browser.saveStorageState()) as StorageState;
+    } else if (body.cookies || body.origins) {
+      // Direct storage state in body
+      storageState = {
+        cookies: body.cookies || [],
+        origins: body.origins || [],
+      };
+    } else {
+      return c.json(
+        {
+          error: "Either sessionId or storage state (cookies/origins) required",
+        },
+        400,
+      );
+    }
+
+    const savedPath = saveProfile(name, storageState, {
+      global: body.global,
+      private: body.private,
+      description: body.description,
+    });
+
+    return c.json({
+      name,
+      path: savedPath,
+      cookies: storageState.cookies.length,
+      origins: storageState.origins.length,
+    });
+  });
+
+  // DELETE /profiles/:name - delete profile
+  app.delete("/profiles/:name", (c) => {
+    const name = c.req.param("name");
+    const resolved = resolveProfilePath(name);
+    if (!resolved) {
+      return c.json({ error: `Profile not found: ${name}` }, 404);
+    }
+
+    const deleted = deleteProfile(name);
+    if (!deleted) {
+      return c.json({ error: `Failed to delete profile: ${name}` }, 500);
+    }
+
+    return c.json({ deleted: name, path: resolved.path });
   });
 
   const server = Bun.serve({
