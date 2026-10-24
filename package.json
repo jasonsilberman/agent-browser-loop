@@ -13,7 +13,8 @@
     "url": "https://github.com/jasonsilberman/agent-browser-loop/issues"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "bun": ">=1.0.0",
+    "node": "24.x"
   },
   "keywords": [
     "ai",
@@ -68,6 +69,6 @@
     "typescript": "^5.7.2"
   },
   "volta": {
-    "node": "24.12.0"
+    "node": "24.22.1"
   }
 }
